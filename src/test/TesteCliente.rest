@@ -1,0 +1,13 @@
+### LISTAR CLIENTES
+GET http://127.0.0.1:8000/cliente
+
+
+### CRIAR CLIENTE
+POST http://127.0.0.1:8000/cliente
+Content-Type: application/json
+
+{
+    "nome": "Maria",
+    "cpf": "99988877766",
+    "telefone": "499888888"
+}

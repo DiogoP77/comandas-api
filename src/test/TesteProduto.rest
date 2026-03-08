@@ -1,0 +1,12 @@
+### LISTAR PRODUTOS
+GET http://127.0.0.1:8000/produto
+
+
+### CRIAR PRODUTO
+POST http://127.0.0.1:8000/produto
+Content-Type: application/json
+
+{
+    "nome": "Pastel",
+    "preco": 12.5
+}
