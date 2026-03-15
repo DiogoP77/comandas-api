@@ -1,23 +1,115 @@
-from fastapi import APIRouter
-from domain.entities.Cliente import Cliente
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+from typing import List
+
+from domain.schemas.ClienteSchemas import (
+    ClienteCreate,
+    ClienteUpdate,
+    ClienteResponse
+)
+
+from infra.orm.ClienteModel import ClienteDB
+from infra.database import get_db
+
 router = APIRouter()
-# Criar as rotas/endpoints: GET, POST, PUT, DELETE
-@router.get("/cliente/", tags=["Cliente"], status_code=200)
-def get_cliente():
-    return {"msg": "cliente get todos executado"}
 
-@router.get("/cliente/{id}", tags=["Cliente"], status_code=200)
-def get_cliente(id: int):
-    return {"msg": "cliente get um executado"}
 
-@router.post("/cliente/", tags=["Cliente"], status_code=200)
-def post_cliente(corpo: Cliente):
-    return {"msg": "cliente post executado", "nome": corpo.nome, "cpf": corpo.cpf, "telefone": corpo.telefone}
+# LISTAR CLIENTES
+@router.get(
+    "/cliente/",
+    response_model=List[ClienteResponse],
+    tags=["Cliente"]
+)
+async def get_clientes(db: Session = Depends(get_db)):
 
-@router.put("/cliente/{id}", tags=["Cliente"], status_code=200)
-def put_cliente(id: int, corpo: Cliente):
-    return {"msg": "cliente put executado", "id":id, "nome": corpo.nome, "cpf": corpo.cpf, "telefone": corpo.telefone}
+    clientes = db.query(ClienteDB).all()
 
-@router.delete("/cliente/{id}", tags=["Cliente"], status_code=200)
-def delete_cliente(id: int):
-    return {"msg": "cliente delete executado", "id":id}
+    return clientes
+
+
+# BUSCAR CLIENTE POR ID
+@router.get(
+    "/cliente/{id}",
+    response_model=ClienteResponse,
+    tags=["Cliente"]
+)
+async def get_cliente(id: int, db: Session = Depends(get_db)):
+
+    cliente = db.query(ClienteDB).filter(ClienteDB.id == id).first()
+
+    if not cliente:
+        raise HTTPException(
+            status_code=404,
+            detail="Cliente não encontrado"
+        )
+
+    return cliente
+
+
+# CRIAR CLIENTE
+@router.post(
+    "/cliente/",
+    response_model=ClienteResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Cliente"]
+)
+async def post_cliente(cliente_data: ClienteCreate, db: Session = Depends(get_db)):
+
+    novo_cliente = ClienteDB(
+        nome=cliente_data.nome,
+        cpf=cliente_data.cpf,
+        telefone=cliente_data.telefone
+    )
+
+    db.add(novo_cliente)
+    db.commit()
+    db.refresh(novo_cliente)
+
+    return novo_cliente
+
+
+# ATUALIZAR CLIENTE
+@router.put(
+    "/cliente/{id}",
+    response_model=ClienteResponse,
+    tags=["Cliente"]
+)
+async def put_cliente(id: int, cliente_data: ClienteUpdate, db: Session = Depends(get_db)):
+
+    cliente = db.query(ClienteDB).filter(ClienteDB.id == id).first()
+
+    if not cliente:
+        raise HTTPException(
+            status_code=404,
+            detail="Cliente não encontrado"
+        )
+
+    update_data = cliente_data.model_dump(exclude_unset=True)
+
+    for field, value in update_data.items():
+        setattr(cliente, field, value)
+
+    db.commit()
+    db.refresh(cliente)
+
+    return cliente
+
+
+# DELETAR CLIENTE
+@router.delete(
+    "/cliente/{id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["Cliente"]
+)
+async def delete_cliente(id: int, db: Session = Depends(get_db)):
+
+    cliente = db.query(ClienteDB).filter(ClienteDB.id == id).first()
+
+    if not cliente:
+        raise HTTPException(
+            status_code=404,
+            detail="Cliente não encontrado"
+        )
+
+    db.delete(cliente)
+    db.commit()
