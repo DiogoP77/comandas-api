@@ -3,6 +3,7 @@ from settings import HOST, PORT, RELOAD
 import uvicorn
 
 # import das rotas
+from routers import AuthRouter
 from routers import FuncionarioRouter
 from routers import ClienteRouter
 from routers import ProdutoRouter
@@ -44,6 +45,7 @@ async def root():
 
 
 # incluir routers
+app.include_router(AuthRouter.router)
 app.include_router(FuncionarioRouter.router)
 app.include_router(ClienteRouter.router)
 app.include_router(ProdutoRouter.router)
@@ -57,3 +59,4 @@ if __name__ == "__main__":
         port=int(PORT),
         reload=RELOAD
     )
+    #Diogo Pereira
