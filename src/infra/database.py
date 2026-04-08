@@ -6,14 +6,18 @@ from settings import STR_DATABASE
 engine = create_engine(STR_DATABASE, echo=True)
 
 # sessão
-Session = sessionmaker(bind=engine, autocommit=False, autoflush=True)
+Session = sessionmaker(
+    bind=engine,
+    autocommit=False,
+    autoflush=False  # melhor prática para FastAPI
+)
 
 # base das tabelas
 Base = declarative_base()
 
 # cria as tabelas
-async def cria_tabelas():
-    Base.metadata.create_all(engine)
+def cria_tabelas():
+    Base.metadata.create_all(bind=engine)
 
 # dependência para rotas
 def get_db():

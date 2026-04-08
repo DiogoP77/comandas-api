@@ -1,181 +1,106 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
-from typing import List
 
-from domain.schemas.ClienteSchemas import (
-    ClienteCreate,
-    ClienteUpdate,
-    ClienteResponse
-)
+from infra.rate_limit import limiter
+from domain.schemas.ClienteSchemas import ClienteCreate, ClienteUpdate, ClienteResponse
 from domain.schemas.AuthSchemas import FuncionarioAuth
 
 from infra.orm.ClienteModel import ClienteDB
 from infra.database import get_db
-from infra.dependencies import get_current_active_user, require_group
+from infra.dependencies import require_group
+from services.AuditoriaService import AuditoriaService
 
 router = APIRouter()
 
-
-# 🔎 LISTAR CLIENTES (PROTEGIDO)
-@router.get(
-    "/cliente/",
-    response_model=List[ClienteResponse],
-    tags=["Cliente"],
-    status_code=status.HTTP_200_OK,
-    summary="Listar todos os clientes"
-)
-async def get_clientes(
-    db: Session = Depends(get_db),
-    current_user: FuncionarioAuth = Depends(get_current_active_user)
-):
-    try:
-        return db.query(ClienteDB).all()
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Erro ao buscar clientes: {str(e)}"
-        )
+def to_dict(obj):
+    return {c.name: str(getattr(obj, c.name)) for c in obj.__table__.columns}
 
 
-# 🔎 BUSCAR CLIENTE POR ID (PROTEGIDO)
-@router.get(
-    "/cliente/{id}",
-    response_model=ClienteResponse,
-    tags=["Cliente"],
-    status_code=status.HTTP_200_OK,
-    summary="Buscar cliente por ID"
-)
-async def get_cliente(
-    id: int,
-    db: Session = Depends(get_db),
-    current_user: FuncionarioAuth = Depends(get_current_active_user)
-):
-    try:
-        cliente = db.query(ClienteDB).filter(ClienteDB.id == id).first()
+@router.post("/cliente/", response_model=ClienteResponse)
+@limiter.limit("10/minute")
+async def post_cliente(cliente_data: ClienteCreate, request: Request,
+                       db: Session = Depends(get_db),
+                       current_user: FuncionarioAuth = Depends(require_group([1, 3]))):
 
-        if not cliente:
-            raise HTTPException(
-                status_code=404,
-                detail="Cliente não encontrado"
-            )
+    novo = ClienteDB(**cliente_data.model_dump())
 
-        return cliente
+    db.add(novo)
+    db.commit()
+    db.refresh(novo)
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Erro ao buscar cliente: {str(e)}"
-        )
+    AuditoriaService.registrar_acao(
+        db=db,
+        funcionario_id=current_user.id,
+        acao="CREATE",
+        recurso="CLIENTE",
+        recurso_id=novo.id,
+        dados_novos=to_dict(novo),
+        request=request
+    )
+
+    return novo
 
 
-# ➕ CRIAR CLIENTE (GRUPO 1 E 3)
-@router.post(
-    "/cliente/",
-    response_model=ClienteResponse,
-    status_code=status.HTTP_201_CREATED,
-    tags=["Cliente"],
-    summary="Criar novo cliente"
-)
-async def post_cliente(
-    cliente_data: ClienteCreate,
-    db: Session = Depends(get_db),
-    current_user: FuncionarioAuth = Depends(require_group([1, 3]))
-):
-    try:
-        novo_cliente = ClienteDB(
-            nome=cliente_data.nome,
-            cpf=cliente_data.cpf,
-            telefone=cliente_data.telefone
-        )
+@router.put("/cliente/{id}", response_model=ClienteResponse)
+@limiter.limit("10/minute")
+async def put_cliente(id: int, cliente_data: ClienteUpdate,
+                      request: Request, db: Session = Depends(get_db),
+                      current_user: FuncionarioAuth = Depends(require_group([1, 3]))):
 
-        db.add(novo_cliente)
-        db.commit()
-        db.refresh(novo_cliente)
+    cliente = db.query(ClienteDB).filter(ClienteDB.id == id).first()
 
-        return novo_cliente
+    if not cliente:
+        raise HTTPException(404, "Cliente não encontrado")
 
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Erro ao criar cliente: {str(e)}"
-        )
+    dados_antigos = to_dict(cliente)
 
+    update_data = cliente_data.model_dump(exclude_unset=True)
 
-# ✏️ ATUALIZAR CLIENTE (GRUPO 1 E 3)
-@router.put(
-    "/cliente/{id}",
-    response_model=ClienteResponse,
-    tags=["Cliente"],
-    status_code=status.HTTP_200_OK,
-    summary="Atualizar cliente"
-)
-async def put_cliente(
-    id: int,
-    cliente_data: ClienteUpdate,
-    db: Session = Depends(get_db),
-    current_user: FuncionarioAuth = Depends(require_group([1, 3]))
-):
-    try:
-        cliente = db.query(ClienteDB).filter(ClienteDB.id == id).first()
+    if not update_data:
+        raise HTTPException(400, "Nenhum dado enviado")
 
-        if not cliente:
-            raise HTTPException(
-                status_code=404,
-                detail="Cliente não encontrado"
-            )
+    for k, v in update_data.items():
+        setattr(cliente, k, v)
 
-        update_data = cliente_data.model_dump(exclude_unset=True)
+    db.commit()
+    db.refresh(cliente)
 
-        for field, value in update_data.items():
-            setattr(cliente, field, value)
+    AuditoriaService.registrar_acao(
+        db=db,
+        funcionario_id=current_user.id,
+        acao="UPDATE",
+        recurso="CLIENTE",
+        recurso_id=cliente.id,
+        dados_antigos=dados_antigos,
+        dados_novos=to_dict(cliente),
+        request=request
+    )
 
-        db.commit()
-        db.refresh(cliente)
-
-        return cliente
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Erro ao atualizar cliente: {str(e)}"
-        )
+    return cliente
 
 
-# ❌ DELETAR CLIENTE (GRUPO 1)
-@router.delete(
-    "/cliente/{id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    tags=["Cliente"],
-    summary="Deletar cliente"
-)
-async def delete_cliente(
-    id: int,
-    db: Session = Depends(get_db),
-    current_user: FuncionarioAuth = Depends(require_group([1]))
-):
-    try:
-        cliente = db.query(ClienteDB).filter(ClienteDB.id == id).first()
+@router.delete("/cliente/{id}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("5/minute")
+async def delete_cliente(id: int, request: Request,
+                         db: Session = Depends(get_db),
+                         current_user: FuncionarioAuth = Depends(require_group([1]))):
 
-        if not cliente:
-            raise HTTPException(
-                status_code=404,
-                detail="Cliente não encontrado"
-            )
+    cliente = db.query(ClienteDB).filter(ClienteDB.id == id).first()
 
-        db.delete(cliente)
-        db.commit()
+    if not cliente:
+        raise HTTPException(404, "Cliente não encontrado")
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Erro ao deletar cliente: {str(e)}"
-        )
+    dados_antigos = to_dict(cliente)
+
+    db.delete(cliente)
+    db.commit()
+
+    AuditoriaService.registrar_acao(
+        db=db,
+        funcionario_id=current_user.id,
+        acao="DELETE",
+        recurso="CLIENTE",
+        recurso_id=id,
+        dados_antigos=dados_antigos,
+        request=request
+    )

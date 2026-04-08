@@ -1,217 +1,107 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
-from typing import List
+from fastapi import APIRouter, Depends, HTTPException, Request
 
-from domain.schemas.ProdutoSchemas import (
-    ProdutoCreate,
-    ProdutoUpdate,
-    ProdutoResponse
-)
+from infra.rate_limit import limiter
+from domain.schemas.ProdutoSchemas import ProdutoCreate, ProdutoUpdate, ProdutoResponse
 from domain.schemas.AuthSchemas import FuncionarioAuth
 
 from infra.orm.ProdutoModel import ProdutoDB
 from infra.database import get_db
-from infra.dependencies import get_current_active_user, require_group
+from infra.dependencies import require_group
+from services.AuditoriaService import AuditoriaService
 
 router = APIRouter()
 
-
-# 🌍 LISTAR PRODUTOS (PÚBLICO - SEM PREÇO)
-@router.get(
-    "/produto/publico",
-    tags=["Produto"],
-    summary="Listar produtos público (sem preço)"
-)
-async def get_produtos_publico(db: Session = Depends(get_db)):
-    try:
-        produtos = db.query(ProdutoDB).all()
-
-        # Remove preço da resposta
-        return [
-            {
-                "id": p.id,
-                "nome": p.nome,
-                "foto": p.foto
-            }
-            for p in produtos
-        ]
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Erro ao buscar produtos públicos: {str(e)}"
-        )
+def to_dict(obj):
+    return {c.name: str(getattr(obj, c.name)) for c in obj.__table__.columns}
 
 
-# 🔐 LISTAR PRODUTOS COMPLETO (PROTEGIDO)
-@router.get(
-    "/produto/",
-    response_model=List[ProdutoResponse],
-    tags=["Produto"],
-    status_code=status.HTTP_200_OK,
-    summary="Listar produtos completo"
-)
-async def get_produtos(
-    db: Session = Depends(get_db),
-    current_user: FuncionarioAuth = Depends(get_current_active_user)
-):
-    try:
-        return db.query(ProdutoDB).all()
+@router.post("/produto/", response_model=ProdutoResponse)
+@limiter.limit("10/minute")
+async def post_produto(produto_data: ProdutoCreate, request: Request,
+                       db=Depends(get_db),
+                       current_user: FuncionarioAuth = Depends(require_group([1]))):
 
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Erro ao buscar produtos: {str(e)}"
-        )
+    novo = ProdutoDB(**produto_data.model_dump())
 
+    db.add(novo)
+    db.commit()
+    db.refresh(novo)
 
-# 🔐 BUSCAR PRODUTO POR ID (PROTEGIDO)
-@router.get(
-    "/produto/{id}",
-    response_model=ProdutoResponse,
-    tags=["Produto"],
-    status_code=status.HTTP_200_OK,
-    summary="Buscar produto por ID"
-)
-async def get_produto(
-    id: int,
-    db: Session = Depends(get_db),
-    current_user: FuncionarioAuth = Depends(get_current_active_user)
-):
-    try:
-        produto = db.query(ProdutoDB).filter(ProdutoDB.id == id).first()
+    AuditoriaService.registrar_acao(
+        db=db,
+        funcionario_id=current_user.id,
+        acao="CREATE",
+        recurso="PRODUTO",
+        recurso_id=novo.id,
+        dados_novos=to_dict(novo),
+        request=request
+    )
 
-        if not produto:
-            raise HTTPException(
-                status_code=404,
-                detail="Produto não encontrado"
-            )
-
-        return produto
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Erro ao buscar produto: {str(e)}"
-        )
+    return novo
 
 
-# ➕ CRIAR PRODUTO (GRUPO 1)
-@router.post(
-    "/produto/",
-    response_model=ProdutoResponse,
-    status_code=status.HTTP_201_CREATED,
-    tags=["Produto"],
-    summary="Criar produto"
-)
-async def post_produto(
-    produto_data: ProdutoCreate,
-    db: Session = Depends(get_db),
-    current_user: FuncionarioAuth = Depends(require_group([1]))
-):
-    try:
-        novo_produto = ProdutoDB(
-            nome=produto_data.nome,
-            preco=produto_data.preco,
-            foto=produto_data.foto
-        )
+@router.put("/produto/{id}", response_model=ProdutoResponse)
+@limiter.limit("10/minute")
+async def put_produto(id: int, produto_data: ProdutoUpdate,
+                      request: Request, db=Depends(get_db),
+                      current_user: FuncionarioAuth = Depends(require_group([1]))):
 
-        db.add(novo_produto)
-        db.commit()
-        db.refresh(novo_produto)
+    produto = db.query(ProdutoDB).filter(ProdutoDB.id == id).first()
 
-        return novo_produto
+    if not produto:
+        raise HTTPException(404, "Produto não encontrado")
 
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Erro ao criar produto: {str(e)}"
-        )
+    dados_antigos = to_dict(produto)
 
+    update_data = produto_data.model_dump(exclude_unset=True)
 
-# ✏️ ATUALIZAR PRODUTO (GRUPO 1)
-@router.put(
-    "/produto/{id}",
-    response_model=ProdutoResponse,
-    tags=["Produto"],
-    status_code=status.HTTP_200_OK,
-    summary="Atualizar produto"
-)
-async def put_produto(
-    id: int,
-    produto_data: ProdutoUpdate,
-    db: Session = Depends(get_db),
-    current_user: FuncionarioAuth = Depends(require_group([1]))
-):
-    try:
-        produto = db.query(ProdutoDB).filter(ProdutoDB.id == id).first()
+    if not update_data:
+        raise HTTPException(400, "Nenhum dado enviado")
 
-        if not produto:
-            raise HTTPException(
-                status_code=404,
-                detail="Produto não encontrado"
-            )
+    for k, v in update_data.items():
+        setattr(produto, k, v)
 
-        update_data = produto_data.model_dump(exclude_unset=True)
+    db.commit()
+    db.refresh(produto)
 
-        for field, value in update_data.items():
-            setattr(produto, field, value)
+    AuditoriaService.registrar_acao(
+        db=db,
+        funcionario_id=current_user.id,
+        acao="UPDATE",
+        recurso="PRODUTO",
+        recurso_id=produto.id,
+        dados_antigos=dados_antigos,
+        dados_novos=to_dict(produto),
+        request=request
+    )
 
-        db.commit()
-        db.refresh(produto)
-
-        return produto
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Erro ao atualizar produto: {str(e)}"
-        )
+    return produto
 
 
-# ❌ DELETAR PRODUTO (GRUPO 1)
-@router.delete(
-    "/produto/{id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    tags=["Produto"],
-    summary="Deletar produto"
-)
-async def delete_produto(
-    id: int,
-    db: Session = Depends(get_db),
-    current_user: FuncionarioAuth = Depends(require_group([1]))
-):
-    try:
-        produto = db.query(ProdutoDB).filter(ProdutoDB.id == id).first()
+@router.delete("/produto/{id}")
+@limiter.limit("5/minute")
+async def delete_produto(id: int, request: Request,
+                         db=Depends(get_db),
+                         current_user: FuncionarioAuth = Depends(require_group([1]))):
 
-        if not produto:
-            raise HTTPException(
-                status_code=404,
-                detail="Produto não encontrado"
-            )
+    produto = db.query(ProdutoDB).filter(ProdutoDB.id == id).first()
 
-        db.delete(produto)
-        db.commit()
+    if not produto:
+        raise HTTPException(404, "Produto não encontrado")
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Erro ao deletar produto: {str(e)}"
-        )
-    @router.get(
-    "/produto/publico",
-    response_model=List[ProdutoResponse],
-    tags=["Produto Público"]
-)
-    async def get_produtos_publicos(db: Session = Depends(get_db)):
-        produtos = db.query(ProdutoDB).all()
-        return produtos
+    dados_antigos = to_dict(produto)
+
+    AuditoriaService.registrar_acao(
+        db=db,
+        funcionario_id=current_user.id,
+        acao="DELETE",
+        recurso="PRODUTO",
+        recurso_id=id,
+        dados_antigos=dados_antigos,
+        request=request
+    )
+
+    db.delete(produto)
+    db.commit()
+
+    return {"message": "Produto deletado"}

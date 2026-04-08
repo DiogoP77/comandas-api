@@ -1,224 +1,121 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 from typing import List
 
+from infra.rate_limit import limiter, get_rate_limit
+from services.AuditoriaService import AuditoriaService
+
 from domain.schemas.FuncionarioSchemas import (
-    FuncionarioCreate,
-    FuncionarioUpdate,
-    FuncionarioResponse
+    FuncionarioCreate, FuncionarioUpdate, FuncionarioResponse
 )
 from domain.schemas.AuthSchemas import FuncionarioAuth
 
 from infra.orm.FuncionarioModel import FuncionarioDB
 from infra.database import get_db
 from infra.security import get_password_hash
-from infra.dependencies import get_current_active_user, require_group
+from infra.dependencies import require_group
 
 router = APIRouter()
 
-
-# 🔎 LISTAR FUNCIONÁRIOS (ADMIN)
-@router.get(
-    "/funcionario/",
-    response_model=List[FuncionarioResponse],
-    status_code=status.HTTP_200_OK,
-    tags=["Funcionário"],
-    summary="Listar todos os funcionários"
-)
-async def get_funcionarios(
-    db: Session = Depends(get_db),
-    current_user: FuncionarioAuth = Depends(require_group([1]))
-):
-    try:
-        return db.query(FuncionarioDB).all()
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Erro ao buscar funcionários: {str(e)}"
-        )
+def to_dict(obj):
+    return {c.name: str(getattr(obj, c.name)) for c in obj.__table__.columns}
 
 
-# 🔎 BUSCAR POR ID (AUTENTICADO)
-@router.get(
-    "/funcionario/{id}",
-    response_model=FuncionarioResponse,
-    status_code=status.HTTP_200_OK,
-    tags=["Funcionário"],
-    summary="Buscar funcionário por ID"
-)
-async def get_funcionario(
-    id: int,
-    db: Session = Depends(get_db),
-    current_user: FuncionarioAuth = Depends(get_current_active_user)
-):
-    try:
-        funcionario = db.query(FuncionarioDB).filter(FuncionarioDB.id == id).first()
+@router.post("/funcionario/", response_model=FuncionarioResponse)
+@limiter.limit(get_rate_limit("critical"))
+async def post_funcionario(funcionario_data: FuncionarioCreate, request: Request,
+                           db: Session = Depends(get_db),
+                           current_user: FuncionarioAuth = Depends(require_group([1]))):
 
-        if not funcionario:
-            raise HTTPException(
-                status_code=404,
-                detail="Funcionário não encontrado"
-            )
+    novo = FuncionarioDB(
+        nome=funcionario_data.nome,
+        matricula=funcionario_data.matricula,
+        cpf=funcionario_data.cpf,
+        telefone=funcionario_data.telefone,
+        grupo=funcionario_data.grupo,
+        senha=get_password_hash(funcionario_data.senha)
+    )
 
-        return funcionario
+    db.add(novo)
+    db.commit()
+    db.refresh(novo)
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Erro ao buscar funcionário: {str(e)}"
-        )
+    AuditoriaService.registrar_acao(
+        db=db,
+        funcionario_id=current_user.id,
+        acao="CREATE",
+        recurso="FUNCIONARIO",
+        recurso_id=novo.id,
+        dados_novos=to_dict(novo),
+        request=request
+    )
 
-
-# ➕ CRIAR FUNCIONÁRIO (ADMIN)
-@router.post(
-    "/funcionario/",
-    response_model=FuncionarioResponse,
-    status_code=status.HTTP_201_CREATED,
-    tags=["Funcionário"],
-    summary="Criar novo funcionário"
-)
-async def post_funcionario(
-    funcionario_data: FuncionarioCreate,
-    db: Session = Depends(get_db),
-    current_user: FuncionarioAuth = Depends(require_group([1]))
-):
-    try:
-        # Verifica CPF duplicado
-        existing_funcionario = db.query(FuncionarioDB).filter(
-            FuncionarioDB.cpf == funcionario_data.cpf
-        ).first()
-
-        if existing_funcionario:
-            raise HTTPException(
-                status_code=400,
-                detail="Já existe um funcionário com este CPF"
-            )
-
-        # Hash da senha
-        hashed_password = get_password_hash(funcionario_data.senha)
-
-        novo_funcionario = FuncionarioDB(
-            nome=funcionario_data.nome,
-            matricula=funcionario_data.matricula,
-            cpf=funcionario_data.cpf,
-            telefone=funcionario_data.telefone,
-            grupo=funcionario_data.grupo,
-            senha=hashed_password
-        )
-
-        db.add(novo_funcionario)
-        db.commit()
-        db.refresh(novo_funcionario)
-
-        return novo_funcionario
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Erro ao criar funcionário: {str(e)}"
-        )
+    return novo
 
 
-# ✏️ ATUALIZAR FUNCIONÁRIO (ADMIN)
-@router.put(
-    "/funcionario/{id}",
-    response_model=FuncionarioResponse,
-    status_code=status.HTTP_200_OK,
-    tags=["Funcionário"],
-    summary="Atualizar funcionário"
-)
-async def put_funcionario(
-    id: int,
-    funcionario_data: FuncionarioUpdate,
-    db: Session = Depends(get_db),
-    current_user: FuncionarioAuth = Depends(require_group([1]))
-):
-    try:
-        funcionario = db.query(FuncionarioDB).filter(FuncionarioDB.id == id).first()
+@router.put("/funcionario/{id}", response_model=FuncionarioResponse)
+@limiter.limit(get_rate_limit("critical"))
+async def put_funcionario(id: int, funcionario_data: FuncionarioUpdate,
+                          request: Request, db: Session = Depends(get_db),
+                          current_user: FuncionarioAuth = Depends(require_group([1]))):
 
-        if not funcionario:
-            raise HTTPException(
-                status_code=404,
-                detail="Funcionário não encontrado"
-            )
+    funcionario = db.query(FuncionarioDB).filter(FuncionarioDB.id == id).first()
 
-        # Verifica CPF duplicado
-        if funcionario_data.cpf and funcionario_data.cpf != funcionario.cpf:
-            existing = db.query(FuncionarioDB).filter(
-                FuncionarioDB.cpf == funcionario_data.cpf
-            ).first()
+    if not funcionario:
+        raise HTTPException(404, "Funcionário não encontrado")
 
-            if existing:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Já existe um funcionário com este CPF"
-                )
+    dados_antigos = to_dict(funcionario)
 
-        update_data = funcionario_data.model_dump(exclude_unset=True)
+    update_data = funcionario_data.model_dump(exclude_unset=True)
 
-        # Hash se atualizar senha
-        if "senha" in update_data:
-            update_data["senha"] = get_password_hash(update_data["senha"])
+    if not update_data:
+        raise HTTPException(400, "Nenhum dado enviado")
 
-        for field, value in update_data.items():
-            setattr(funcionario, field, value)
+    if "senha" in update_data:
+        update_data["senha"] = get_password_hash(update_data["senha"])
 
-        db.commit()
-        db.refresh(funcionario)
+    for k, v in update_data.items():
+        setattr(funcionario, k, v)
 
-        return funcionario
+    db.commit()
+    db.refresh(funcionario)
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Erro ao atualizar funcionário: {str(e)}"
-        )
+    AuditoriaService.registrar_acao(
+        db=db,
+        funcionario_id=current_user.id,
+        acao="UPDATE",
+        recurso="FUNCIONARIO",
+        recurso_id=funcionario.id,
+        dados_antigos=dados_antigos,
+        dados_novos=to_dict(funcionario),
+        request=request
+    )
+
+    return funcionario
 
 
-# ❌ DELETAR FUNCIONÁRIO (ADMIN)
-@router.delete(
-    "/funcionario/{id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    tags=["Funcionário"],
-    summary="Remover funcionário"
-)
-async def delete_funcionario(
-    id: int,
-    db: Session = Depends(get_db),
-    current_user: FuncionarioAuth = Depends(require_group([1]))
-):
-    try:
-        funcionario = db.query(FuncionarioDB).filter(FuncionarioDB.id == id).first()
+@router.delete("/funcionario/{id}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit(get_rate_limit("critical"))
+async def delete_funcionario(id: int, request: Request,
+                             db: Session = Depends(get_db),
+                             current_user: FuncionarioAuth = Depends(require_group([1]))):
 
-        if not funcionario:
-            raise HTTPException(
-                status_code=404,
-                detail="Funcionário não encontrado"
-            )
+    funcionario = db.query(FuncionarioDB).filter(FuncionarioDB.id == id).first()
 
-        # Evita deletar a si mesmo
-        if current_user.id == id:
-            raise HTTPException(
-                status_code=400,
-                detail="Não é possível excluir seu próprio usuário"
-            )
+    if not funcionario:
+        raise HTTPException(404, "Funcionário não encontrado")
 
-        db.delete(funcionario)
-        db.commit()
+    dados_antigos = to_dict(funcionario)
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Erro ao deletar funcionário: {str(e)}"
-        )
+    db.delete(funcionario)
+    db.commit()
+
+    AuditoriaService.registrar_acao(
+        db=db,
+        funcionario_id=current_user.id,
+        acao="DELETE",
+        recurso="FUNCIONARIO",
+        recurso_id=id,
+        dados_antigos=dados_antigos,
+        request=request
+    )
