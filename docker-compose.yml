@@ -1,0 +1,69 @@
+services:
+  db:
+    image: mysql:8
+    container_name: mysql_comandas_api
+
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASS}
+      MYSQL_DATABASE: ${DB_NAME}
+      MYSQL_USER: ${DB_USER}
+      MYSQL_PASSWORD: ${DB_PASS}
+
+    ports:
+      - "${DB_PORT:-3306}:3306"
+
+    volumes:
+      - db_data:/var/lib/mysql
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p${DB_PASS}"]
+      timeout: 20s
+      retries: 10
+      interval: 10s
+      start_period: 40s
+
+    networks:
+      - comandas_network
+
+
+  comandas_api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    image: comandas-api
+    container_name: comandas_api
+
+    depends_on:
+      db:
+        condition: service_healthy
+
+    env_file:
+      - .env
+
+    environment:
+      TESTE_AMBIENTE: "API DO ZÉ"
+      DATABASE_URL: "mysql+pymysql://${DB_USER}:${DB_PASS}@db:3306/${DB_NAME}"
+
+    ports:
+      - "${PORT:-4443}:4443"
+
+    volumes:
+      - ./cert:/cert:ro
+      - ./logs:/app/logs
+
+    restart: unless-stopped
+
+    networks:
+      - comandas_network
+
+
+volumes:
+  db_data:
+
+
+networks:
+  comandas_network:
+    driver: bridge

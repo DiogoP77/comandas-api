@@ -1,84 +1,104 @@
-#Diogo Pereira da Silva
+# Diogo
+
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+
 import uvicorn
 
-from settings import HOST, PORT, RELOAD
+# 🔹 CONFIG
+from src.settings import CORS_ORIGINS
 
-from infra.rate_limit import limiter, rate_limit_exceeded_handler
-from slowapi.errors import RateLimitExceeded
-from slowapi.middleware import SlowAPIMiddleware
+# 🔹 DATABASE
+from src.infra.database import cria_tabelas
 
-from infra import database
-
-# Routers
-from routers import (
-    HealthRouter,
-    AuditoriaRouter,
-    AuthRouter,
-    FuncionarioRouter,
-    ClienteRouter,
-    ProdutoRouter
-)
+# 🔹 ROUTERS
+from src.routers.AuthRouter import router as auth_router
+from src.routers.ClienteRouter import router as cliente_router
+from src.routers.FuncionarioRouter import router as funcionario_router
+from src.routers.ProdutoRouter import router as produto_router
+from src.routers.ComandaRouter import router as comanda_router
+from src.routers.AuditoriaRouter import router as auditoria_router
+from src.routers.HealthRouter import router as health_router
 
 
-# 🔥 LIFESPAN (inicialização da API)
+# ==============================
+# 🔥 LIFESPAN
+# ==============================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("🚀 API iniciando...")
-
-    # criação das tabelas
-    database.cria_tabelas()
-
+    cria_tabelas()
     yield
 
-    print("🛑 API finalizada")
 
-
-# 🔥 INSTÂNCIA DA API
+# ==============================
+# 🔥 APP
+# ==============================
 app = FastAPI(
-    title="API Pastelaria",
-    description="API com Rate Limiting, Auditoria e Health Check",
+    title="Comandas API",
     version="1.0.0",
-    lifespan=lifespan
+    description="API para gerenciamento de comandas",
+    lifespan=lifespan,
+    openapi_tags=[
+        {"name": "Auth", "description": "Autenticação"},
+        {"name": "Funcionário", "description": "Gerenciamento de funcionários"},
+        {"name": "Cliente", "description": "Gerenciamento de clientes"},
+        {"name": "Produto", "description": "Gerenciamento de produtos"},
+        {"name": "Comanda", "description": "Gerenciamento de comandas"},
+        {"name": "Auditoria", "description": "Logs do sistema"},
+        {"name": "Health", "description": "Monitoramento da API"},
+    ]
 )
 
 
-# 🔥 RATE LIMIT GLOBAL (CORRETO)
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
-app.add_middleware(SlowAPIMiddleware)
+# ==============================
+# 🔥 CORS
+# ==============================
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
-# 🌐 ROOT
+# ==============================
+# 🔥 ROTAS
+# ==============================
+app.include_router(auth_router, tags=["Auth"])
+
+app.include_router(funcionario_router, prefix="/funcionario", tags=["Funcionário"])
+app.include_router(cliente_router, prefix="/cliente", tags=["Cliente"])
+app.include_router(produto_router, prefix="/produto", tags=["Produto"])
+app.include_router(comanda_router, prefix="/comanda", tags=["Comanda"])
+app.include_router(auditoria_router, prefix="/auditoria", tags=["Auditoria"])
+app.include_router(health_router, tags=["Health"])
+
+
+# ==============================
+# 🔥 ROOT
+# ==============================
 @app.get("/", tags=["Root"])
 async def root():
     return {
-        "message": "API Pastelaria rodando 🚀",
-        "docs": "/docs",
-        "redoc": "/redoc"
+        "detail": "API Comandas",
+        "docs": "http://127.0.0.1:8000/docs",
+        "redoc": "http://127.0.0.1:8000/redoc"
     }
 
 
-# 📌 REGISTRO DOS ROUTERS (CORRIGIDO)
-app.include_router(AuthRouter.router, prefix="/auth", tags=["Auth"])
-app.include_router(FuncionarioRouter.router, prefix="/funcionario", tags=["Funcionário"])
-app.include_router(ClienteRouter.router, prefix="/cliente", tags=["Cliente"])
-app.include_router(ProdutoRouter.router, prefix="/produto", tags=["Produto"])
-app.include_router(AuditoriaRouter.router, prefix="/auditoria", tags=["Auditoria"])
-app.include_router(HealthRouter.router, prefix="/health", tags=["Health Check"])
-
-
-# 🚀 RUN
+# ==============================
+# 🚀 RUN SERVER
+# ==============================
 if __name__ == "__main__":
     uvicorn.run(
-        "main:app",
-        host=HOST,
-        port=int(PORT),
-        reload=RELOAD
-    )
+        "src.main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True
 
-    # rota padrão
-@app.get("/", tags=["Root"], status_code=200, summary="Informações da API - pública")
-async def root():
-    return {"detail":"API Comandas", "Swagger UI": "http://127.0.0.1:8000/docs", "ReDoc": "http://127.0.0.1:8000/redoc" }
+    )
+    #DIogo Pereira 
+    #python -m src.main código para rodar
+    #https://localhost:8000

@@ -1,10 +1,10 @@
 from sqlalchemy.orm import Session
 from fastapi import Request
 from typing import Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 
-from infra.orm.AuditoriaModel import AuditoriaDB
+from src.infra.orm.AuditoriaModel import AuditoriaDB
 
 
 class AuditoriaService:
@@ -25,8 +25,10 @@ class AuditoriaService:
             ip_address = None
             user_agent = None
 
+            # 🌐 Captura dados da requisição
             if request:
                 forwarded_for = request.headers.get("X-Forwarded-For")
+
                 if forwarded_for:
                     ip_address = forwarded_for.split(",")[0].strip()
                 else:
@@ -34,11 +36,13 @@ class AuditoriaService:
 
                 user_agent = request.headers.get("User-Agent")
 
+            # 🔄 Converte dict para JSON
             def to_json(data):
                 if not data:
                     return None
                 return json.dumps(data, default=str)
 
+            # 🧾 Cria auditoria
             auditoria = AuditoriaDB(
                 funcionario_id=funcionario_id,
                 acao=acao.upper(),
@@ -48,12 +52,12 @@ class AuditoriaService:
                 dados_novos=to_json(dados_novos),
                 ip_address=ip_address,
                 user_agent=user_agent,
-                data_hora=datetime.now()
+                data_hora=datetime.now(timezone.utc)
             )
 
             db.add(auditoria)
 
-            # 🔥 ESSA LINHA É O SEGREDO DO UPDATE
+            # ⚠️ flush pra garantir ID (commit fica fora)
             db.flush()
 
             return True

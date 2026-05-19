@@ -1,28 +1,111 @@
+# Diogo Pereira
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
-from settings import STR_DATABASE
-
-# cria o engine do banco
-engine = create_engine(STR_DATABASE, echo=True)
-
-# sessão
-Session = sessionmaker(
-    bind=engine,
-    autocommit=False,
-    autoflush=False  # melhor prática para FastAPI
+from sqlalchemy.ext.asyncio import (
+    create_async_engine,
+    AsyncSession,
+    async_sessionmaker
 )
 
-# base das tabelas
+# 🔥 IMPORT CORRETO
+from src.settings import STR_DATABASE, ASYNC_STR_DATABASE
+
+
+# ==============================
+# 🔥 ENGINES
+# ==============================
+
+# Engine síncrono (compatibilidade)
+engine = create_engine(
+    STR_DATABASE,
+    echo=True,
+    future=True
+)
+
+# Engine assíncrono (principal - COMANDA usa esse)
+async_engine = create_async_engine(
+    ASYNC_STR_DATABASE,
+    echo=True,
+    future=True
+)
+
+
+# ==============================
+# 🔥 SESSÕES
+# ==============================
+
+# Sessão síncrona
+SessionLocal = sessionmaker(
+    bind=engine,
+    autocommit=False,
+    autoflush=False
+)
+
+# Sessão assíncrona
+AsyncSessionLocal = async_sessionmaker(
+    bind=async_engine,
+    class_=AsyncSession,
+    expire_on_commit=False
+)
+
+
+# ==============================
+# 🔥 BASE DOS MODELS
+# ==============================
+
 Base = declarative_base()
 
-# cria as tabelas
+
+# ==============================
+# 🔥 IMPORTAR MODELS (OBRIGATÓRIO)
+# ==============================
+# ⚠️ Isso garante que o SQLAlchemy "enxergue" as tabelas
+
+from src.infra.orm import (  # noqa: E402
+    ClienteModel,
+    FuncionarioModel,
+    ProdutoModel,
+    ComandaModel,
+    AuditoriaModel
+)
+
+
+# ==============================
+# 🔥 CRIAÇÃO DE TABELAS
+# ==============================
+
 def cria_tabelas():
+    """
+    Cria tabelas no modo síncrono
+    👉 Use no startup sem await
+    """
     Base.metadata.create_all(bind=engine)
 
-# dependência para rotas
+
+async def cria_tabelas_async():
+    """
+    Cria tabelas no modo assíncrono
+    👉 Opcional (caso queira async)
+    """
+    async with async_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+
+# ==============================
+# 🔥 DEPENDÊNCIAS
+# ==============================
+
+# 🔹 Síncrono
 def get_db():
-    db_session = Session()
+    db = SessionLocal()
     try:
-        yield db_session
+        yield db
     finally:
-        db_session.close()
+        db.close()
+
+
+# 🔹 Assíncrono
+async def get_async_db():
+    async with AsyncSessionLocal() as session:
+        yield session

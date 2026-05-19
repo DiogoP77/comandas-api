@@ -1,0 +1,57 @@
+# =========================
+
+# 🔐 Token
+
+# =========================
+
+@access_token = seuToken
+
+# =========================
+
+# ➕ Adicionar produto à comanda
+
+# =========================
+
+POST http://127.0.0.1:8000/comanda/1/produto
+Content-Type: application/json
+Authorization: Bearer {{access_token}}
+
+{
+"produto_id": 1,
+"funcionario_id": 2,
+"quantidade": 20,
+"valor_unitario": 51.50
+}
+
+# =========================
+
+# 📋 Listar produtos de uma comanda
+
+# =========================
+
+GET http://127.0.0.1:8000/comanda/1/produtos
+Authorization: Bearer {{access_token}}
+
+# =========================
+
+# ✏️ Atualizar produto da comanda
+
+# =========================
+
+PUT http://127.0.0.1:8000/comanda/produto/2
+Content-Type: application/json
+Authorization: Bearer {{access_token}}
+
+{
+"quantidade": 5,
+"valor_unitario": 15.50
+}
+
+# =========================
+
+# ❌ Remover produto da comanda
+
+# =========================
+
+DELETE http://127.0.0.1:8000/comanda/produto/3
+Authorization: Bearer {{access_token}}

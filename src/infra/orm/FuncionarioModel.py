@@ -1,7 +1,8 @@
-from infra import database
 from sqlalchemy import Column, VARCHAR, CHAR, Integer
+from src.infra.database import Base
 
-class FuncionarioDB(database.Base):
+
+class FuncionarioDB(Base):
     __tablename__ = "tb_funcionario"
 
     id = Column(Integer, primary_key=True, autoincrement=True, index=True)

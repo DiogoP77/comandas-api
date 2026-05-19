@@ -1,7 +1,8 @@
-from infra import database
 from sqlalchemy import Column, Integer, VARCHAR, CHAR
+from src.infra.database import Base
 
-class ClienteDB(database.Base):
+
+class ClienteDB(Base):
 
     __tablename__ = "tb_cliente"
 

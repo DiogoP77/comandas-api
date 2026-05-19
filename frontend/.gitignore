@@ -22,3 +22,20 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Environment
+.env
+
+# DB local
+*.db
+*.sqlite3
+
+# Frontend
+node_modules/
+
+# Logs
+*.log
